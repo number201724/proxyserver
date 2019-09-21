@@ -17,7 +17,7 @@ void dump_bytes(void *data, size_t len)
     printf("\n");
 }
 
-TcpReader::TcpReader(std::shared_ptr<Tcp> &_tcp) :tcp(_tcp)
+TcpReader::TcpReader(std::shared_ptr<Tcp> &_tcp) : tcp(_tcp)
 {
 }
 
@@ -53,6 +53,7 @@ void TcpReader::read_cb(uv_stream_t *stream,
         CloseRequest::close(reader->tcp);
         tcp->reader = nullptr;
         delete reader;
+        printf("close\n");
         return;
     }
 
@@ -69,8 +70,6 @@ void TcpReader::read_cb(uv_stream_t *stream,
     serializer.Write((unsigned char)ID_A2A_TCP_STREAM);
     serializer.Write(tcp->guid);
     serializer.Write(buf->base, nread);
-
-    printf("send %u bytes\n", nread);
 
     proxyServer->Send(tcp->proxyclient, tcp->guid, serializer);
 }
@@ -95,7 +94,6 @@ void WriteRequest::write_cb(uv_write_t *req, int status)
 {
     WriteRequest *request = (WriteRequest *)req->data;
 
-    printf("write_cb:%d\n", status);
     delete request;
 }
 
@@ -129,12 +127,17 @@ Tcp::~Tcp()
 void CloseRequest::close_cb(uv_handle_t *handle)
 {
     Tcp *ptcp = (Tcp *)handle->data;
-    //printf("close_cb ptcp:%p\n", ptcp);
 
     std::shared_ptr<Tcp> tcp = ptcp->close->tcp;
     delete tcp->close;
     tcp->close = nullptr;
     tcp->stage = SOCKS5_CONN_STAGE_CLOSED;
+
+    if (tcp->proxyclient)
+    {
+        proxyServer->SencClose(tcp->proxyclient, tcp->guid);
+        tcp->proxyclient->CloseTcp(tcp);
+    }
 }
 
 void CloseRequest::close(std::shared_ptr<Tcp> &handle)
@@ -155,12 +158,11 @@ void ConnectRequest::connect_cb(uv_connect_t *req, int status)
 
     if (status == UV_ECANCELED)
     {
-        proxyServer->ConnectResponse(connect_request->_tcp->proxyclient,
-                                     connect_request->_tcp->guid,
-                                     SOCKS5_RESPONSE_SERVER_FAILURE,
-                                     connect_request->_tcp->remote_addrtype,
-                                     &connect_request->_tcp->remote_addr);
-        connect_request->_tcp->proxyclient->CloseTcp(connect_request->_tcp);
+        proxyServer->SendConnectResult(connect_request->_tcp->proxyclient,
+                                       connect_request->_tcp->guid,
+                                       SOCKS5_RESPONSE_SERVER_FAILURE,
+                                       connect_request->_tcp->remote_addrtype,
+                                       &connect_request->_tcp->remote_addr);
         CloseRequest::close(connect_request->_tcp);
         delete connect_request;
         return;
@@ -184,13 +186,13 @@ void ConnectRequest::connect_cb(uv_connect_t *req, int status)
             connect_request->_tcp->bnd_addr.v6 = *(sockaddr_in6 *)&sockaddr;
         }
 
-        proxyServer->ConnectResponse(connect_request->_tcp->proxyclient,
-                                     connect_request->_tcp->guid,
-                                     SOCKS5_RESPONSE_SUCCESS,
-                                     connect_request->_tcp->bnd_addrtype,
-                                     &connect_request->_tcp->bnd_addr);
+        proxyServer->SendConnectResult(connect_request->_tcp->proxyclient,
+                                       connect_request->_tcp->guid,
+                                       SOCKS5_RESPONSE_SUCCESS,
+                                       connect_request->_tcp->bnd_addrtype,
+                                       &connect_request->_tcp->bnd_addr);
 
-        printf("SOCKS5_CONN_STAGE_CONNECTED\n");
+        //printf("SOCKS5_CONN_STAGE_CONNECTED\n");
 
         auto &tcp = connect_request->_tcp;
         if (TcpReader::begin_read(tcp) != 0)
@@ -199,9 +201,7 @@ void ConnectRequest::connect_cb(uv_connect_t *req, int status)
         }
         else
         {
-
             tcp->stage = SOCKS5_CONN_STAGE_STREAM;
-            printf("SOCKS5_CONN_STAGE_STREAM\n");
         }
 
         delete connect_request;
@@ -210,39 +210,38 @@ void ConnectRequest::connect_cb(uv_connect_t *req, int status)
 
     if (status == UV_ENETUNREACH)
     {
-        proxyServer->ConnectResponse(connect_request->_tcp->proxyclient,
-                                     connect_request->_tcp->guid,
-                                     SOCKS5_RESPONSE_NETWORK_UNREACHABLE,
-                                     connect_request->_tcp->remote_addrtype,
-                                     &connect_request->_tcp->remote_addr);
+        proxyServer->SendConnectResult(connect_request->_tcp->proxyclient,
+                                       connect_request->_tcp->guid,
+                                       SOCKS5_RESPONSE_NETWORK_UNREACHABLE,
+                                       connect_request->_tcp->remote_addrtype,
+                                       &connect_request->_tcp->remote_addr);
     }
     else if (status == UV_EHOSTUNREACH)
     {
-        proxyServer->ConnectResponse(connect_request->_tcp->proxyclient,
-                                     connect_request->_tcp->guid,
-                                     SOCKS5_RESPONSE_HOST_UNREACHABLE,
-                                     connect_request->_tcp->remote_addrtype,
-                                     &connect_request->_tcp->remote_addr);
+        proxyServer->SendConnectResult(connect_request->_tcp->proxyclient,
+                                       connect_request->_tcp->guid,
+                                       SOCKS5_RESPONSE_HOST_UNREACHABLE,
+                                       connect_request->_tcp->remote_addrtype,
+                                       &connect_request->_tcp->remote_addr);
     }
     else if (status == UV_ECONNREFUSED)
     {
-        proxyServer->ConnectResponse(connect_request->_tcp->proxyclient,
-                                     connect_request->_tcp->guid,
-                                     SOCKS5_RESPONSE_CONNECTION_REFUSED,
-                                     connect_request->_tcp->remote_addrtype,
-                                     &connect_request->_tcp->remote_addr);
+        proxyServer->SendConnectResult(connect_request->_tcp->proxyclient,
+                                       connect_request->_tcp->guid,
+                                       SOCKS5_RESPONSE_CONNECTION_REFUSED,
+                                       connect_request->_tcp->remote_addrtype,
+                                       &connect_request->_tcp->remote_addr);
     }
     else
     {
-        proxyServer->ConnectResponse(connect_request->_tcp->proxyclient,
-                                     connect_request->_tcp->guid,
-                                     SOCKS5_RESPONSE_TTL_EXPIRED,
-                                     connect_request->_tcp->remote_addrtype,
-                                     &connect_request->_tcp->remote_addr);
+        proxyServer->SendConnectResult(connect_request->_tcp->proxyclient,
+                                       connect_request->_tcp->guid,
+                                       SOCKS5_RESPONSE_TTL_EXPIRED,
+                                       connect_request->_tcp->remote_addrtype,
+                                       &connect_request->_tcp->remote_addr);
     }
 
-    printf("SOCKS5_CONN_STAGE_CLOSING\n");
-    connect_request->_tcp->proxyclient->CloseTcp(connect_request->_tcp);
+    //printf("SOCKS5_CONN_STAGE_CLOSING\n");
 
     CloseRequest::close(connect_request->_tcp);
     delete connect_request;
@@ -283,7 +282,7 @@ void GetAddrInfoRequest::getaddrinfo_cb(uv_getaddrinfo_t *req,
             CloseRequest::close(getaddrinfo_request->_tcp);
         }
 
-        printf("SOCKS5_CONN_STAGE_CONNECTING\n");
+        //printf("SOCKS5_CONN_STAGE_CONNECTING\n");
         break;
     }
 
@@ -362,7 +361,7 @@ bool ProxyClient::InitTcp(std::shared_ptr<Tcp> &tcp, unsigned char addrtype, con
             return false;
         }
 
-        printf("SOCKS5_CONN_STAGE_CONNECTING\n");
+        //printf("SOCKS5_CONN_STAGE_CONNECTING\n");
     }
     else if (addrtype == SOCKS5_ADDRTYPE_DOMAIN)
     {
@@ -390,7 +389,7 @@ bool ProxyClient::InitTcp(std::shared_ptr<Tcp> &tcp, unsigned char addrtype, con
             return false;
         }
 
-        printf("SOCKS5_CONN_STAGE_EXHOST\n");
+        //printf("SOCKS5_CONN_STAGE_EXHOST\n");
     }
 
     return true;
@@ -549,11 +548,11 @@ void ProxyServer::ReadClientMessage(RakNet::Packet *packet)
             if (reader.Read(addr.v4.sin_addr) && reader.Read(addr.v4.sin_port))
             {
                 begin_connect = true;
-                printf("SOCKS5_ADDRTYPE_IPV4:%s:%d\n", inet_ntoa(addr.v4.sin_addr), htons(addr.v4.sin_port));
+                //printf("SOCKS5_ADDRTYPE_IPV4:%s:%d\n", inet_ntoa(addr.v4.sin_addr), htons(addr.v4.sin_port));
             }
             else
             {
-                ConnectResponse(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
+                SendConnectResult(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
             }
         }
         else if (remote_addrtype == SOCKS5_ADDRTYPE_IPV6)
@@ -564,7 +563,7 @@ void ProxyServer::ReadClientMessage(RakNet::Packet *packet)
             }
             else
             {
-                ConnectResponse(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
+                SendConnectResult(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
             }
         }
         else if (remote_addrtype == SOCKS5_ADDRTYPE_DOMAIN)
@@ -575,20 +574,17 @@ void ProxyServer::ReadClientMessage(RakNet::Packet *packet)
             {
                 strncpy(addr.domain.domain, domain.C_String(), 255);
                 addr.domain.domain[255] = 0;
-
-                printf("%s\n", addr.domain.domain);
-
                 begin_connect = true;
-                printf("SOCKS5_ADDRTYPE_DOMAIN:%s:%d\n", domain.C_String(), htons(addr.domain.port));
+                //printf("SOCKS5_ADDRTYPE_DOMAIN:%s:%d\n", domain.C_String(), htons(addr.domain.port));
             }
             else
             {
-                ConnectResponse(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
+                SendConnectResult(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
             }
         }
         else
         {
-            ConnectResponse(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
+            SendConnectResult(client, guid, SOCKS5_RESPONSE_ADDRTYPE_NOT_SUPPORTED, remote_addrtype, &addr);
         }
 
         if (begin_connect)
@@ -615,11 +611,9 @@ void ProxyServer::ReadClientMessage(RakNet::Packet *packet)
 
     if (identifier == ID_A2A_TCP_STREAM)
     {
-        printf("ID_A2A_TCP_STREAM:%lu\n", guid);
         std::shared_ptr<Tcp> tcp;
         if (client->FindTcp(guid, tcp))
         {
-            printf("write data\n");
             unsigned char *stream_data = reader.GetData() + BITS_TO_BYTES(reader.GetReadOffset());
             size_t stream_len = BITS_TO_BYTES(reader.GetNumberOfUnreadBits());
             WriteRequest::write(tcp, stream_data, stream_len);
@@ -628,11 +622,15 @@ void ProxyServer::ReadClientMessage(RakNet::Packet *packet)
 
     if (identifier == ID_A2A_TCP_CLOSE)
     {
-        printf("ID_A2A_TCP_STREAM\n");
+        std::shared_ptr<Tcp> tcp;
+        if (client->FindTcp(guid, tcp))
+        {
+            CloseRequest::close(tcp);
+        }
     }
 }
 
-void ProxyServer::ConnectResponse(std::shared_ptr<ProxyClient> &client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr)
+void ProxyServer::SendConnectResult(std::shared_ptr<ProxyClient> &client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr)
 {
     RakNet::BitStream serializer;
     serializer.Write((unsigned char)ID_S2C_TCP_CONNECT);
@@ -659,6 +657,15 @@ void ProxyServer::ConnectResponse(std::shared_ptr<ProxyClient> &client, uint64_t
     Send(client, clientguid, serializer, RELIABLE, IMMEDIATE_PRIORITY);
 }
 
+void ProxyServer::SencClose(std::shared_ptr<ProxyClient> &client, uint64_t clientguid)
+{
+    RakNet::BitStream serializer;
+    serializer.Write((unsigned char)ID_A2A_TCP_CLOSE);
+    serializer.Write(clientguid);
+
+    Send(client, clientguid, serializer);
+}
+
 void ProxyServer::Send(std::shared_ptr<ProxyClient> &client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability, PacketPriority priority)
 {
     RakNet::BitStream encrypted_packet;
@@ -672,6 +679,5 @@ void ProxyServer::Send(std::shared_ptr<ProxyClient> &client, uint64_t guid, RakN
     encrypted_packet.Write(packet);
 
     char orderingChannel = guid % 32; //PacketPriority::NUMBER_OF_ORDERED_STREAMS
-    printf("send resp\n");
     rakPeer->Send(&encrypted_packet, priority, reliability, orderingChannel, RakNet::RakNetGUID(client->guid), false);
 }

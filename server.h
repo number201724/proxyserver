@@ -79,14 +79,6 @@ public:
 class GetAddrInfoRequest
 {
 public:
-    GetAddrInfoRequest()
-    {
-        printf("GetAddrInfoRequest();\n");
-    }
-    ~GetAddrInfoRequest()
-    {
-        printf("~GetAddrInfoRequest();\n");
-    }
     std::shared_ptr<Tcp> _tcp;
     uv_getaddrinfo_t getaddrinfo;
 
@@ -98,14 +90,6 @@ public:
 class ConnectRequest
 {
 public:
-    ConnectRequest()
-    {
-        printf("ConnectRequest();\n");
-    }
-    ~ConnectRequest()
-    {
-        printf("~ConnectRequest();\n");
-    }
     uv_connect_t _connect;
     std::shared_ptr<Tcp> _tcp;
 
@@ -147,9 +131,9 @@ public:
 
     void ReadClientMessage(RakNet::Packet *packet);
 
-    void ConnectResponse(std::shared_ptr<ProxyClient> &client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr);
+    void SendConnectResult(std::shared_ptr<ProxyClient> &client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr);
     void Send(std::shared_ptr<ProxyClient> &client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability = RELIABLE_ORDERED, PacketPriority priority = MEDIUM_PRIORITY);
-
+    void SencClose(std::shared_ptr<ProxyClient> &client,uint64_t clientguid);
     void Lock();
     void Unlock();
 
