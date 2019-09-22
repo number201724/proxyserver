@@ -12,21 +12,50 @@
 class ProxyClient;
 class Tcp;
 
+class ReferneceObject
+{
+public:
+    ReferneceObject()
+    {
+        _refcnt = 1;
+    }
+    virtual ~ReferneceObject() {}
+    virtual int64_t AddRef()
+    {
+        return __sync_add_and_fetch(&_refcnt, 1);
+    }
+
+    virtual int64_t Release()
+    {
+        int64_t refcnt = __sync_sub_and_fetch(&_refcnt, 1);
+
+        if (refcnt == 0)
+        {
+            delete this;
+        }
+
+        return refcnt;
+    }
+
+private:
+    int64_t _refcnt;
+};
+
 class CloseRequest
 {
 public:
     static void close_cb(uv_handle_t *handle);
-    static void close(std::shared_ptr<Tcp> &handle);
-    std::shared_ptr<Tcp> tcp;
+    static void close(Tcp *handle);
+    Tcp *tcp;
 };
 
 class TcpReader
 {
 public:
-    TcpReader(std::shared_ptr<Tcp> &_tcp);
+    TcpReader(Tcp *_tcp);
     ~TcpReader();
 
-    static int begin_read(std::shared_ptr<Tcp> &_tcp);
+    static int begin_read(Tcp *_tcp);
 
     static void alloc_cb(uv_handle_t *handle,
                          size_t suggested_size,
@@ -35,28 +64,30 @@ public:
                         ssize_t nread,
                         const uv_buf_t *buf);
 
-    std::shared_ptr<Tcp> tcp;
+    Tcp *tcp;
     char buf[0x10000];
 };
 
 class WriteRequest
 {
 public:
-    WriteRequest(std::shared_ptr<Tcp> &_tcp, void *data, size_t len);
+    WriteRequest(Tcp *_tcp, void *data, size_t len);
     ~WriteRequest();
 
-    static void write(std::shared_ptr<Tcp> &_tcp, void *data, size_t len);
+    static void write(Tcp *_tcp, void *data, size_t len);
     static void write_cb(uv_write_t *req, int status);
-    std::shared_ptr<Tcp> tcp;
+    Tcp *tcp;
     uv_write_t request;
     uv_buf_t buf;
 };
 
-class Tcp
+class Tcp : public ReferneceObject
 {
+private:
+    virtual ~Tcp();
+
 public:
     Tcp(uint64_t g);
-    ~Tcp();
 
     int stage;
     uint64_t guid;
@@ -71,14 +102,18 @@ public:
 
     CloseRequest *close;
     TcpReader *reader;
+    ProxyClient *proxyclient;
 
-    std::shared_ptr<ProxyClient> proxyclient;
+    int64_t sequence;
+
+public:
+    void Send(void *data, size_t len);
 };
 
 class GetAddrInfoRequest
 {
 public:
-    std::shared_ptr<Tcp> _tcp;
+    Tcp *_tcp;
     uv_getaddrinfo_t getaddrinfo;
 
     static void getaddrinfo_cb(uv_getaddrinfo_t *req,
@@ -90,24 +125,24 @@ class ConnectRequest
 {
 public:
     uv_connect_t _connect;
-    std::shared_ptr<Tcp> _tcp;
+    Tcp *_tcp;
 
     static void connect_cb(uv_connect_t *req, int status);
 };
 
-class ProxyClient
+class ProxyClient : public ReferneceObject
 {
 public:
     ProxyClient(uint64_t g);
     ~ProxyClient();
 
-    void AddTcp(std::shared_ptr<Tcp> &tcp);
-    bool InitTcp(std::shared_ptr<Tcp> &tcp, unsigned char addrtype, const socks5_addr &addr);
-    void CloseTcp(std::shared_ptr<Tcp> &tcp);
-    bool FindTcp(uint64_t guid, std::shared_ptr<Tcp> &tcp);
+    void AddTcp(Tcp *tcp);
+    bool InitTcp(Tcp *tcp, unsigned char addrtype, const socks5_addr &addr);
+    void CloseTcp(Tcp *tcp);
+    bool FindTcp(uint64_t guid, Tcp *&tcp);
     uint64_t guid;
 
-    std::unordered_map<uint64_t, std::shared_ptr<Tcp>> _tcp_connection_map;
+    std::unordered_map<uint64_t, Tcp *> _tcp_connection_map;
 };
 
 class ProxyServer
@@ -118,19 +153,19 @@ public:
 
     void SetupKey(const char *str_password);
 
-    std::shared_ptr<ProxyClient> AddClient(uint64_t guid);
+    ProxyClient *AddClient(uint64_t guid);
     void RemoveClient(uint64_t guid);
-    bool FindClient(uint64_t guid, std::shared_ptr<ProxyClient> &client);
+    bool FindClient(uint64_t guid, ProxyClient *&client);
 
     void ReadClientMessage(RakNet::Packet *packet);
 
-    void SendConnectResult(std::shared_ptr<ProxyClient> &client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr);
-    void Send(std::shared_ptr<ProxyClient> &client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability = RELIABLE_ORDERED, PacketPriority priority = MEDIUM_PRIORITY);
-    void SencClose(std::shared_ptr<ProxyClient> &client, uint64_t clientguid);
+    void SendConnectResult(ProxyClient *client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr);
+    void Send(ProxyClient *client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability = RELIABLE_ORDERED, PacketPriority priority = MEDIUM_PRIORITY);
+    void SencClose(ProxyClient *client, uint64_t clientguid);
 
 private:
     unsigned char password[32];
-    std::unordered_map<uint64_t, std::shared_ptr<ProxyClient>> _client_instance_map;
+    std::unordered_map<uint64_t, ProxyClient *> _client_instance_map;
 };
 
 extern ProxyServer *proxyServer;

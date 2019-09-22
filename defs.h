@@ -6,14 +6,14 @@
 #include <alloca.h>
 #include <assert.h>
 
-#include <thread>
-#include <mutex>
 #include <vector>
 #include <list>
 #include <unordered_map>
 #include "protocol.h"
 #include <unistd.h>
 #include <algorithm>
+#include <thread>
+#include <mutex>
 
 #include "salsa20.h"
 #include <openssl/sha.h>
@@ -32,8 +32,6 @@ typedef SOCKET sock_t;
 #include <sys/select.h>
 typedef int sock_t;
 #endif
-
-
 
 #include "MessageIdentifiers.h"
 #include "RakPeerInterface.h"

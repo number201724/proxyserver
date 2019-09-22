@@ -6,6 +6,14 @@ RakNet::RakPeerInterface *rakPeer;
 #define HOST "127.0.0.1"
 #define PORT 27015
 
+uv_timer_t debugtimer;
+
+extern uint64_t tcp_usecount;
+static void ontimer(uv_timer_t *timer)
+{
+    printf("tcp usecount:%lu\n", tcp_usecount);
+}
+
 // Copied from Multiplayer.cpp
 // If the first byte is ID_TIMESTAMP, then we want the 5th byte
 // Otherwise we want the 1st byte
@@ -45,10 +53,50 @@ size_t GetPacketLength(RakNet::Packet *p)
         return p->length;
 }
 
+uv_timer_t udp_timer;
+
+static void udp_packet_update(uv_timer_t *timer)
+{
+    RakNet::Packet *p;
+    unsigned char packetIdentifier;
+
+    for (p = rakPeer->Receive(); p; rakPeer->DeallocatePacket(p), p = rakPeer->Receive())
+    {
+        packetIdentifier = GetPacketIdentifier(p);
+        switch (packetIdentifier)
+        {
+        case ID_DISCONNECTION_NOTIFICATION:
+            proxyServer->RemoveClient(p->guid.g);
+            printf("ID_DISCONNECTION_NOTIFICATION from %s\n", p->systemAddress.ToString(true));
+            break;
+        case ID_NEW_INCOMING_CONNECTION:
+            proxyServer->AddClient(p->guid.g);
+            printf("ID_NEW_INCOMING_CONNECTION from %s with GUID %s\n", p->systemAddress.ToString(true), p->guid.ToString());
+            break;
+        case ID_INCOMPATIBLE_PROTOCOL_VERSION:
+            printf("ID_INCOMPATIBLE_PROTOCOL_VERSION\n");
+            break;
+        case ID_CONNECTED_PING:
+        case ID_UNCONNECTED_PING:
+            printf("Ping from %s\n", p->systemAddress.ToString(true));
+            break;
+        case ID_CONNECTION_LOST:
+            proxyServer->RemoveClient(p->guid.g);
+            printf("ID_CONNECTION_LOST from %s\n", p->systemAddress.ToString(true));
+            break;
+        case ID_USER_PACKET_ENUM:
+            proxyServer->ReadClientMessage(p);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
     signal(SIGPIPE, SIG_IGN);
-    
+
     rakPeer = RakNet::RakPeerInterface::GetInstance();
     rakPeer->SetTimeoutTime(10000, RakNet::UNASSIGNED_SYSTEM_ADDRESS);
     rakPeer->AllowConnectionResponseIPMigration(false);
@@ -69,48 +117,12 @@ int main(int argc, char *argv[])
     proxyServer->SetupKey("WDNMDNMSL");
     rakPeer->SetMaximumIncomingConnections(500);
 
-    while (true)
-    {
-        RakNet::Packet *p;
-        unsigned char packetIdentifier;
+    uv_timer_init(uv_default_loop(), &debugtimer);
+    uv_timer_start(&debugtimer, ontimer, 5000, 5000);
 
-        for (p = rakPeer->Receive(); p; rakPeer->DeallocatePacket(p), p = rakPeer->Receive())
-        {
-            std::shared_ptr<ProxyClient> client;
-            packetIdentifier = GetPacketIdentifier(p);
-            switch (packetIdentifier)
-            {
-            case ID_DISCONNECTION_NOTIFICATION:
-                proxyServer->RemoveClient(p->guid.g);
-                printf("ID_DISCONNECTION_NOTIFICATION from %s\n", p->systemAddress.ToString(true));
-                break;
-            case ID_NEW_INCOMING_CONNECTION:
-                proxyServer->AddClient(p->guid.g);
-                printf("ID_NEW_INCOMING_CONNECTION from %s with GUID %s\n", p->systemAddress.ToString(true), p->guid.ToString());
-                break;
-            case ID_INCOMPATIBLE_PROTOCOL_VERSION:
-                printf("ID_INCOMPATIBLE_PROTOCOL_VERSION\n");
-                break;
-            case ID_CONNECTED_PING:
-            case ID_UNCONNECTED_PING:
-                printf("Ping from %s\n", p->systemAddress.ToString(true));
-                break;
-            case ID_CONNECTION_LOST:
-                proxyServer->RemoveClient(p->guid.g);
-                printf("ID_CONNECTION_LOST from %s\n", p->systemAddress.ToString(true));
-                break;
-            case ID_USER_PACKET_ENUM:
-                proxyServer->ReadClientMessage(p);
-                break;
-            default:
-                break;
-            }
-        }
+    uv_timer_init(uv_default_loop(), &udp_timer);
+    uv_timer_start(&udp_timer, udp_packet_update, 10, 10);
 
-        uv_run(uv_default_loop(), UV_RUN_NOWAIT);
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(30));
-    }
-
+    uv_run(uv_default_loop(), UV_RUN_DEFAULT);
     return 0;
 }
