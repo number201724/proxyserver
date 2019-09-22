@@ -25,7 +25,7 @@ class TcpReader
 public:
     TcpReader(std::shared_ptr<Tcp> &_tcp);
     ~TcpReader();
-   
+
     static int begin_read(std::shared_ptr<Tcp> &_tcp);
 
     static void alloc_cb(uv_handle_t *handle,
@@ -35,7 +35,7 @@ public:
                         ssize_t nread,
                         const uv_buf_t *buf);
 
-     std::shared_ptr<Tcp> tcp;
+    std::shared_ptr<Tcp> tcp;
     char buf[0x10000];
 };
 
@@ -45,9 +45,8 @@ public:
     WriteRequest(std::shared_ptr<Tcp> &_tcp, void *data, size_t len);
     ~WriteRequest();
 
-
     static void write(std::shared_ptr<Tcp> &_tcp, void *data, size_t len);
-    static void write_cb(uv_write_t* req, int status);
+    static void write_cb(uv_write_t *req, int status);
     std::shared_ptr<Tcp> tcp;
     uv_write_t request;
     uv_buf_t buf;
@@ -106,15 +105,9 @@ public:
     bool InitTcp(std::shared_ptr<Tcp> &tcp, unsigned char addrtype, const socks5_addr &addr);
     void CloseTcp(std::shared_ptr<Tcp> &tcp);
     bool FindTcp(uint64_t guid, std::shared_ptr<Tcp> &tcp);
-    void Lock();
-    void Unlock();
-
     uint64_t guid;
 
     std::unordered_map<uint64_t, std::shared_ptr<Tcp>> _tcp_connection_map;
-
-private:
-    std::mutex _lock;
 };
 
 class ProxyServer
@@ -133,13 +126,10 @@ public:
 
     void SendConnectResult(std::shared_ptr<ProxyClient> &client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr);
     void Send(std::shared_ptr<ProxyClient> &client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability = RELIABLE_ORDERED, PacketPriority priority = MEDIUM_PRIORITY);
-    void SencClose(std::shared_ptr<ProxyClient> &client,uint64_t clientguid);
-    void Lock();
-    void Unlock();
+    void SencClose(std::shared_ptr<ProxyClient> &client, uint64_t clientguid);
 
 private:
     unsigned char password[32];
-    std::mutex _lock;
     std::unordered_map<uint64_t, std::shared_ptr<ProxyClient>> _client_instance_map;
 };
 

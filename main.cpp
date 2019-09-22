@@ -47,6 +47,8 @@ size_t GetPacketLength(RakNet::Packet *p)
 
 int main(int argc, char *argv[])
 {
+    signal(SIGPIPE, SIG_IGN);
+    
     rakPeer = RakNet::RakPeerInterface::GetInstance();
     rakPeer->SetTimeoutTime(10000, RakNet::UNASSIGNED_SYSTEM_ADDRESS);
     rakPeer->AllowConnectionResponseIPMigration(false);

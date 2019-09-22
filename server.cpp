@@ -53,11 +53,10 @@ void TcpReader::read_cb(uv_stream_t *stream,
         CloseRequest::close(reader->tcp);
         tcp->reader = nullptr;
         delete reader;
-        printf("close\n");
         return;
     }
 
-    if (nread == 0)
+    if(nread <= 0)
     {
         uv_read_stop(stream);
         CloseRequest::close(reader->tcp);
@@ -65,7 +64,7 @@ void TcpReader::read_cb(uv_stream_t *stream,
         delete reader;
         return;
     }
-
+    
     RakNet::BitStream serializer;
     serializer.Write((unsigned char)ID_A2A_TCP_STREAM);
     serializer.Write(tcp->guid);
@@ -101,12 +100,18 @@ void WriteRequest::write(std::shared_ptr<Tcp> &_tcp, void *data, size_t len)
 {
     if (_tcp->stage == SOCKS5_CONN_STAGE_STREAM)
     {
+        if(!uv_is_writable((uv_stream_t *)&_tcp->sock)){
+            printf("can't write but write\n");
+        }
+
         WriteRequest *request = new WriteRequest(_tcp, data, len);
         request->request.data = request;
+
         int code = uv_write(&request->request, (uv_stream_t *)&_tcp->sock, &request->buf, 1, write_cb);
         if (code != 0)
         {
             printf("write fail:%d\n", code);
+            delete request;
         }
     }
 }
@@ -133,6 +138,11 @@ void CloseRequest::close_cb(uv_handle_t *handle)
     tcp->close = nullptr;
     tcp->stage = SOCKS5_CONN_STAGE_CLOSED;
 
+    if(tcp->reader){
+        delete tcp->reader;
+        tcp->reader=nullptr;
+    }
+
     if (tcp->proxyclient)
     {
         proxyServer->SencClose(tcp->proxyclient, tcp->guid);
@@ -142,7 +152,7 @@ void CloseRequest::close_cb(uv_handle_t *handle)
 
 void CloseRequest::close(std::shared_ptr<Tcp> &handle)
 {
-    if (handle->stage != SOCKS5_CONN_STAGE_CLOSING && handle->stage != SOCKS5_CONN_STAGE_CLOSED)
+    if (handle->stage < SOCKS5_CONN_STAGE_CLOSING)
     {
         handle->stage = SOCKS5_CONN_STAGE_CLOSING;
         handle->close = new CloseRequest();
@@ -298,21 +308,11 @@ ProxyClient::~ProxyClient()
 {
 }
 
-void ProxyClient::Lock()
-{
-    _lock.lock();
-}
 
-void ProxyClient::Unlock()
-{
-    _lock.unlock();
-}
 
 void ProxyClient::AddTcp(std::shared_ptr<Tcp> &tcp)
 {
-    Lock();
     _tcp_connection_map[tcp->guid] = tcp;
-    Unlock();
 }
 
 bool ProxyClient::InitTcp(std::shared_ptr<Tcp> &tcp, unsigned char addrtype, const socks5_addr &addr)
@@ -399,8 +399,6 @@ void ProxyClient::CloseTcp(std::shared_ptr<Tcp> &tcp)
 {
     tcp->proxyclient.reset();
 
-    Lock();
-
     auto iterator = _tcp_connection_map.find(tcp->guid);
 
     if (iterator != _tcp_connection_map.end())
@@ -408,23 +406,18 @@ void ProxyClient::CloseTcp(std::shared_ptr<Tcp> &tcp)
         _tcp_connection_map.erase(iterator);
     }
 
-    Unlock();
 }
 
 bool ProxyClient::FindTcp(uint64_t guid, std::shared_ptr<Tcp> &tcp)
 {
-    Lock();
-
     auto iterator = _tcp_connection_map.find(guid);
 
     if (iterator != _tcp_connection_map.end())
     {
         tcp = iterator->second;
-        Unlock();
         return true;
     }
 
-    Unlock();
     return false;
 }
 
@@ -434,16 +427,6 @@ ProxyServer::ProxyServer()
 
 ProxyServer::~ProxyServer()
 {
-}
-
-void ProxyServer::Lock()
-{
-    _lock.lock();
-}
-
-void ProxyServer::Unlock()
-{
-    _lock.unlock();
 }
 
 void ProxyServer::SetupKey(const char *str_password)
@@ -462,9 +445,7 @@ std::shared_ptr<ProxyClient> ProxyServer::AddClient(uint64_t guid)
 {
     std::shared_ptr<ProxyClient> client(new ProxyClient(guid));
 
-    Lock();
     _client_instance_map[guid] = client;
-    Unlock();
 
     return client;
 }
@@ -476,16 +457,12 @@ bool ProxyServer::FindClient(uint64_t guid, std::shared_ptr<ProxyClient> &client
 {
     bool f = false;
 
-    Lock();
-
     auto iterator = _client_instance_map.find(guid);
     if (iterator != _client_instance_map.end())
     {
         client = iterator->second;
         f = true;
     }
-
-    Unlock();
 
     return f;
 }
@@ -622,9 +599,12 @@ void ProxyServer::ReadClientMessage(RakNet::Packet *packet)
 
     if (identifier == ID_A2A_TCP_CLOSE)
     {
+        printf("ID_A2A_TCP_CLOSE %lu\n", guid);
         std::shared_ptr<Tcp> tcp;
         if (client->FindTcp(guid, tcp))
         {
+            tcp->proxyclient.reset();
+            client->CloseTcp(tcp);
             CloseRequest::close(tcp);
         }
     }
