@@ -9,8 +9,11 @@
 #define SOCKS5_CONN_STAGE_CLOSING 5
 #define SOCKS5_CONN_STAGE_CLOSED 6
 
-class ProxyClient;
-class Tcp;
+#define BLOCK_SIZE 262144
+
+// 如果禁用ACK则UDP性能最高
+// 但是在下载数据的时候会导致服务器的内存爆涨
+// #define DISABLE_ACK
 
 class ReferneceObject
 {
@@ -37,49 +40,13 @@ public:
         return refcnt;
     }
 
-private:
+public:
     int64_t _refcnt;
 };
 
-class CloseRequest
-{
-public:
-    static void close_cb(uv_handle_t *handle);
-    static void close(Tcp *handle);
-    Tcp *tcp;
-};
-
-class TcpReader
-{
-public:
-    TcpReader(Tcp *_tcp);
-    ~TcpReader();
-
-    static int begin_read(Tcp *_tcp);
-
-    static void alloc_cb(uv_handle_t *handle,
-                         size_t suggested_size,
-                         uv_buf_t *buf);
-    static void read_cb(uv_stream_t *stream,
-                        ssize_t nread,
-                        const uv_buf_t *buf);
-
-    Tcp *tcp;
-    char buf[0x10000];
-};
-
-class WriteRequest
-{
-public:
-    WriteRequest(Tcp *_tcp, void *data, size_t len);
-    ~WriteRequest();
-
-    static void write(Tcp *_tcp, void *data, size_t len);
-    static void write_cb(uv_write_t *req, int status);
-    Tcp *tcp;
-    uv_write_t request;
-    uv_buf_t buf;
-};
+class TcpClose;
+class TcpReader;
+class ProxyClient;
 
 class Tcp : public ReferneceObject
 {
@@ -87,7 +54,7 @@ private:
     virtual ~Tcp();
 
 public:
-    Tcp(uint64_t g);
+    Tcp(uint64_t g, ProxyClient *_proxyclient);
 
     int stage;
     uint64_t guid;
@@ -100,34 +67,125 @@ public:
     uv_tcp_t sock;
     uv_getaddrinfo_t getaddrinfo;
 
-    CloseRequest *close;
+    TcpClose *close;
     TcpReader *reader;
     ProxyClient *proxyclient;
-
-    int64_t sequence;
+    bool remote_close;
+    uint32_t ack;
 
 public:
     void Send(void *data, size_t len);
 };
 
-class GetAddrInfoRequest
+class TcpShutdown
 {
 public:
-    Tcp *_tcp;
-    uv_getaddrinfo_t getaddrinfo;
+    TcpShutdown(Tcp *_tcp);
+    ~TcpShutdown();
+
+    static void shutdown_cb(uv_shutdown_t *req, int status);
+    static void shutdown(Tcp *tcp);
+
+    Tcp *tcp;
+    uv_shutdown_t req;
+};
+
+class TcpClose
+{
+public:
+    TcpClose(Tcp *_tcp) : tcp(_tcp)
+    {
+        tcp->AddRef();
+    }
+
+    ~TcpClose()
+    {
+        tcp->Release();
+    }
+
+    static void close_cb(uv_handle_t *handle);
+    static void close(Tcp *handle);
+    Tcp *tcp;
+};
+
+class TcpReader
+{
+public:
+    TcpReader(Tcp *_tcp);
+    ~TcpReader();
+
+    static int begin_read(Tcp *_tcp);
+    void pause();
+    void resume();
+
+    static void alloc_cb(uv_handle_t *handle,
+                         size_t suggested_size,
+                         uv_buf_t *buf);
+    static void read_cb(uv_stream_t *stream,
+                        ssize_t nread,
+                        const uv_buf_t *buf);
+
+    Tcp *tcp;
+    char buf[BLOCK_SIZE];
+    bool reading;
+};
+
+class TcpWriter
+{
+public:
+    TcpWriter(Tcp *_tcp, void *data, size_t len);
+    ~TcpWriter();
+
+    static void write(Tcp *_tcp, void *data, size_t len);
+    static void write_cb(uv_write_t *req, int status);
+    Tcp *tcp;
+    uv_write_t request;
+    uv_buf_t buf;
+};
+
+class TcpConnect
+{
+public:
+    TcpConnect(Tcp *_tcp) : tcp(_tcp)
+    {
+        _tcp->AddRef();
+        _connect.data = this;
+    }
+
+    ~TcpConnect()
+    {
+        tcp->Release();
+    }
+
+    static int connect(Tcp *_tcp, struct sockaddr *addr);
+
+    uv_connect_t _connect;
+    Tcp *tcp;
+
+    static void connect_cb(uv_connect_t *req, int status);
+};
+
+class AsyncGetAddrInfo
+{
+public:
+    AsyncGetAddrInfo(Tcp *_tcp) : tcp(_tcp)
+    {
+        tcp->AddRef();
+        _getaddrinfo.data = this;
+    }
+
+    ~AsyncGetAddrInfo()
+    {
+        tcp->Release();
+    }
+
+    static int getaddrinfo(Tcp *tcp, const char *node, const char *service, const struct addrinfo *hints);
+    Tcp *tcp;
+    uv_getaddrinfo_t _getaddrinfo;
 
     static void getaddrinfo_cb(uv_getaddrinfo_t *req,
                                int status,
                                struct addrinfo *res);
-};
-
-class ConnectRequest
-{
-public:
-    uv_connect_t _connect;
-    Tcp *_tcp;
-
-    static void connect_cb(uv_connect_t *req, int status);
 };
 
 class ProxyClient : public ReferneceObject
@@ -158,9 +216,16 @@ public:
     bool FindClient(uint64_t guid, ProxyClient *&client);
 
     void ReadClientMessage(RakNet::Packet *packet);
+    void ReadAckMessage(RakNet::Packet *packet);
 
     void SendConnectResult(ProxyClient *client, uint64_t clientguid, unsigned char rep, unsigned char addrtype, socks5_addr *addr);
+#ifdef DISABLE_ACK
+    uint32_t SendStreamData(ProxyClient *client, Tcp *tcp, void *data, size_t length, PacketReliability reliability = RELIABLE_ORDERED, PacketPriority priority = MEDIUM_PRIORITY);
     void Send(ProxyClient *client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability = RELIABLE_ORDERED, PacketPriority priority = MEDIUM_PRIORITY);
+#else
+    uint32_t SendStreamData(ProxyClient *client, Tcp *tcp, void *data, size_t length, PacketReliability reliability = RELIABLE_ORDERED_WITH_ACK_RECEIPT, PacketPriority priority = MEDIUM_PRIORITY);
+    void Send(ProxyClient *client, uint64_t guid, RakNet::BitStream &packet, PacketReliability reliability = RELIABLE_ORDERED_WITH_ACK_RECEIPT, PacketPriority priority = MEDIUM_PRIORITY);
+#endif
     void SencClose(ProxyClient *client, uint64_t clientguid);
 
 private:

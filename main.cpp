@@ -6,14 +6,6 @@ RakNet::RakPeerInterface *rakPeer;
 #define HOST "127.0.0.1"
 #define PORT 27015
 
-uv_timer_t debugtimer;
-
-extern uint64_t tcp_usecount;
-static void ontimer(uv_timer_t *timer)
-{
-    printf("tcp usecount:%lu\n", tcp_usecount);
-}
-
 // Copied from Multiplayer.cpp
 // If the first byte is ID_TIMESTAMP, then we want the 5th byte
 // Otherwise we want the 1st byte
@@ -87,11 +79,16 @@ static void udp_packet_update(uv_timer_t *timer)
         case ID_USER_PACKET_ENUM:
             proxyServer->ReadClientMessage(p);
             break;
+        case ID_SND_RECEIPT_ACKED:
+        case ID_SND_RECEIPT_LOSS:
+            proxyServer->ReadAckMessage(p);
+            break;
         default:
             break;
         }
     }
 }
+
 
 int main(int argc, char *argv[])
 {
@@ -116,9 +113,6 @@ int main(int argc, char *argv[])
 
     proxyServer->SetupKey("WDNMDNMSL");
     rakPeer->SetMaximumIncomingConnections(500);
-
-    uv_timer_init(uv_default_loop(), &debugtimer);
-    uv_timer_start(&debugtimer, ontimer, 5000, 5000);
 
     uv_timer_init(uv_default_loop(), &udp_timer);
     uv_timer_start(&udp_timer, udp_packet_update, 10, 10);

@@ -104,4 +104,18 @@ struct socks5_userpass_res
 #define ID_A2A_TCP_STREAM  0x03
 #define ID_A2A_TCP_CLOSE  0x04
 
+#pragma pack(push,1)
+struct packet_header
+{
+    unsigned char id;
+    unsigned char nonce[8];
+};
+struct stream_header
+{
+    unsigned char id;
+    uint64_t guid;
+    uint32_t crc;
+};
+#pragma pack(pop)
+
 #endif
