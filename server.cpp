@@ -116,6 +116,7 @@ void TcpReader::alloc_cb(uv_handle_t* handle,
 	buf->base = tcp->reader->buf;
 	buf->len = sizeof(tcp->reader->buf);
 }
+
 void TcpReader::read_cb(uv_stream_t* stream,
 	ssize_t nread,
 	const uv_buf_t* buf)
@@ -168,10 +169,7 @@ void TcpShutdown::shutdown_cb(uv_shutdown_t* req, int status)
 	}
 
 	Tcp* tcp = pshutdown->tcp;
-	if (tcp->stage != SOCKS5_CONN_STAGE_CLOSED) {
-		TcpClose::close(tcp);
-	}
-
+	TcpClose::close(tcp);
 	delete pshutdown;
 }
 
@@ -215,6 +213,16 @@ TcpWriter::~TcpWriter()
 void TcpWriter::write_cb(uv_write_t* req, int status)
 {
 	TcpWriter* request = (TcpWriter*)req->data;
+	if (status == UV_ECANCELED) {
+		delete request;
+		return;
+	}
+
+	if (status < 0) {
+		TcpClose::close(request->tcp);
+	}
+
+	
 	delete request;
 }
 
@@ -275,13 +283,11 @@ void TcpClose::close(Tcp* tcp)
 	{
 		tcp->stage = SOCKS5_CONN_STAGE_CLOSED;
 
-		if (tcp->reader)
-		{
+		if (tcp->reader) {
 			uv_read_stop((uv_stream_t*)& tcp->sock);
 		}
 
-		if (!tcp->remote_close)
-		{
+		if (!tcp->remote_close) {
 			proxyServer->SencClose(tcp->proxyclient, tcp->guid);
 		}
 
@@ -295,6 +301,7 @@ int TcpConnect::connect(Tcp* tcp, struct sockaddr* addr)
 {
 	int code;
 	TcpConnect* tcpConnect = new TcpConnect(tcp);
+	tcp->stage = SOCKS5_CONN_STAGE_CONNECTING;
 	code = uv_tcp_connect(&tcpConnect->_connect, &tcp->sock, addr, TcpConnect::connect_cb);
 	if (code)
 	{
@@ -397,7 +404,7 @@ void TcpConnect::connect_cb(uv_connect_t* req, int status)
 int AsyncGetAddrInfo::getaddrinfo(Tcp* tcp, const char* node, const char* service, const struct addrinfo* hints)
 {
 	AsyncGetAddrInfo* async_getaddrinfo = new AsyncGetAddrInfo(tcp);
-
+	tcp->stage = SOCKS5_CONN_STAGE_EXHOST;
 	int code = uv_getaddrinfo(uv_default_loop(), &async_getaddrinfo->_getaddrinfo, AsyncGetAddrInfo::getaddrinfo_cb, node, service, hints);
 
 	if (code)
@@ -428,18 +435,18 @@ void AsyncGetAddrInfo::getaddrinfo_cb(uv_getaddrinfo_t* req,
 		return;
 	}
 
-	auto& tcp = asyncgetaddrinfo->tcp;
-	for (auto p = res; p != NULL; p = p->ai_next)
-	{
-		tcp->stage = SOCKS5_CONN_STAGE_CONNECTING;
-
-		int code = TcpConnect::connect(tcp, p->ai_addr);
-		if (code != 0)
+	if (asyncgetaddrinfo->tcp->stage < SOCKS5_CONN_STAGE_CLOSING) {
+		auto& tcp = asyncgetaddrinfo->tcp;
+		for (auto p = res; p != NULL; p = p->ai_next)
 		{
-			TcpClose::close(asyncgetaddrinfo->tcp);
-		}
+			int code = TcpConnect::connect(tcp, p->ai_addr);
+			if (code != 0)
+			{
+				TcpClose::close(asyncgetaddrinfo->tcp);
+			}
 
-		break;
+			break;
+		}
 	}
 
 	uv_freeaddrinfo(res);
@@ -484,7 +491,6 @@ bool ProxyClient::InitTcp(Tcp* tcp, unsigned char addrtype, const socks5_addr& a
 			paddr = (struct sockaddr*) & addr6;
 		}
 
-		tcp->stage = SOCKS5_CONN_STAGE_CONNECTING;
 		int code = TcpConnect::connect(tcp, paddr);
 		if (code != 0)
 		{
@@ -498,7 +504,6 @@ bool ProxyClient::InitTcp(Tcp* tcp, unsigned char addrtype, const socks5_addr& a
 		struct addrinfo hints;
 		char service[10];
 		sprintf(service, "%d", htons(addr.domain.port));
-		tcp->stage = SOCKS5_CONN_STAGE_EXHOST;
 		memset(&hints, 0, sizeof(struct addrinfo));
 		hints.ai_family = AF_UNSPEC;
 		hints.ai_flags = AI_PASSIVE;
@@ -738,6 +743,7 @@ void ProxyServer::ReadClientMessage(RakNet::Packet* packet)
 		if (begin_connect)
 		{
 			Tcp* tcp = new Tcp(guid, client);
+
 			if (tcp == NULL)
 			{
 				printf("create Tcp failed\n");
