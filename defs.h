@@ -3,14 +3,18 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#ifndef _WIN32
 #include <alloca.h>
+#endif
 #include <assert.h>
 
 #include <vector>
 #include <list>
 #include <unordered_map>
 #include "protocol.h"
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 #include <algorithm>
 #include <thread>
 #include <mutex>

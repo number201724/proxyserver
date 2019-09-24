@@ -93,8 +93,11 @@ void TcpReader::resume()
 {
     if (!reading)
     {
-        uv_read_start((uv_stream_t *)&tcp->sock, TcpReader::alloc_cb, TcpReader::read_cb);
-        reading = true;
+        if (tcp->stage == SOCKS5_CONN_STAGE_STREAM)
+        {
+            uv_read_start((uv_stream_t *)&tcp->sock, TcpReader::alloc_cb, TcpReader::read_cb);
+            reading = true;
+        }
     }
 }
 

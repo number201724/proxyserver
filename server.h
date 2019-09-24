@@ -25,13 +25,20 @@ public:
     virtual ~ReferneceObject() {}
     virtual int64_t AddRef()
     {
+#ifdef _WIN32
+		return InterlockedIncrement64(&_refcnt);
+#else
         return __sync_add_and_fetch(&_refcnt, 1);
+#endif
     }
 
     virtual int64_t Release()
     {
+#ifdef _WIN32
+		int64_t refcnt = InterlockedDecrement64(&_refcnt);
+#else
         int64_t refcnt = __sync_sub_and_fetch(&_refcnt, 1);
-
+#endif
         if (refcnt == 0)
         {
             delete this;

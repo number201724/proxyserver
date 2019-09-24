@@ -92,7 +92,10 @@ static void udp_packet_update(uv_timer_t *timer)
 
 int main(int argc, char *argv[])
 {
-    signal(SIGPIPE, SIG_IGN);
+#ifndef  _WIN32
+	signal(SIGPIPE, SIG_IGN);
+#endif // ! _WIN32
+
 
     rakPeer = RakNet::RakPeerInterface::GetInstance();
     rakPeer->SetTimeoutTime(10000, RakNet::UNASSIGNED_SYSTEM_ADDRESS);
