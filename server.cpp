@@ -161,9 +161,13 @@ TcpShutdown::~TcpShutdown()
 void TcpShutdown::shutdown_cb(uv_shutdown_t *req, int status)
 {
     TcpShutdown *pshutdown = (TcpShutdown *)req->data;
+	if (status == UV_ECANCELED) {
+		delete pshutdown;
+		return;
+	}
+
     Tcp *tcp = pshutdown->tcp;
     TcpClose::close(tcp);
-    delete pshutdown;
 }
 
 void TcpShutdown::shutdown(Tcp *tcp)
@@ -252,11 +256,11 @@ void TcpClose::close_cb(uv_handle_t *handle)
 
     if (tcp->reader)
     {
+		uv_read_stop((uv_stream_t*)& tcp->sock);
         delete tcp->reader;
         tcp->reader = nullptr;
     }
 
-    tcp->proxyclient->CloseTcp(tcp);
     delete close;
 }
 
@@ -278,6 +282,7 @@ void TcpClose::close(Tcp *tcp)
 
         tcp->close = new TcpClose(tcp);
         uv_close((uv_handle_t *)&tcp->sock, close_cb);
+		tcp->proxyclient->CloseTcp(tcp);
     }
 }
 
@@ -305,7 +310,11 @@ void TcpConnect::connect_cb(uv_connect_t *req, int status)
                                        SOCKS5_RESPONSE_SERVER_FAILURE,
                                        tcpConnect->tcp->remote_addrtype,
                                        &tcpConnect->tcp->remote_addr);
-        TcpClose::close(tcp);
+
+		if (tcp->stage < SOCKS5_CONN_STAGE_CLOSING) {
+			TcpClose::close(tcp);
+		}
+
         delete tcpConnect;
         return;
     }
@@ -410,7 +419,10 @@ void AsyncGetAddrInfo::getaddrinfo_cb(uv_getaddrinfo_t *req,
             uv_freeaddrinfo(res);
         }
 
-        TcpClose::close(asyncgetaddrinfo->tcp);
+		if (asyncgetaddrinfo->tcp->stage < SOCKS5_CONN_STAGE_CLOSING) {
+			TcpClose::close(asyncgetaddrinfo->tcp);
+		}
+        
         delete asyncgetaddrinfo;
         return;
     }

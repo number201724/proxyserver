@@ -79,9 +79,6 @@ public:
     ProxyClient *proxyclient;
     bool remote_close;
     uint32_t ack;
-
-public:
-    void Send(void *data, size_t len);
 };
 
 class TcpShutdown
