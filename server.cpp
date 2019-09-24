@@ -595,9 +595,10 @@ void ProxyServer::RemoveClient(uint64_t guid)
 
 	if (client)
 	{
-		for (auto iterator = client->_tcp_connection_map.begin(); iterator != client->_tcp_connection_map.end(); iterator++)
+		while (!client->_tcp_connection_map.empty())
 		{
-			TcpClose::close(iterator->second);
+			auto iterator = client->_tcp_connection_map.begin();
+			TcpClose::close(iterator->second);;
 		}
 		client->Release();
 	}
