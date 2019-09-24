@@ -15,14 +15,14 @@
 // 但是在下载数据的时候会导致服务器的内存爆涨
 // #define DISABLE_ACK
 
-class ReferneceObject
+class ReferenceObject
 {
 public:
-    ReferneceObject()
+    ReferenceObject()
     {
         _refcnt = 1;
     }
-    virtual ~ReferneceObject() {}
+    virtual ~ReferenceObject() {}
     virtual int64_t AddRef()
     {
 #ifdef _WIN32
@@ -55,7 +55,7 @@ class TcpClose;
 class TcpReader;
 class ProxyClient;
 
-class Tcp : public ReferneceObject
+class Tcp : public ReferenceObject
 {
 private:
     virtual ~Tcp();
@@ -195,7 +195,7 @@ public:
                                struct addrinfo *res);
 };
 
-class ProxyClient : public ReferneceObject
+class ProxyClient : public ReferenceObject
 {
 public:
     ProxyClient(uint64_t g);
